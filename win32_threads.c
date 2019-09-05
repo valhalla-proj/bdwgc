@@ -234,9 +234,6 @@ struct GC_Thread_Rep {
                                 /* memory (initially both are 0).       */
 
   unsigned char suspended; /* really of GC_bool type */
-  CONTEXT saved_context; /* populated as part of GC_suspend as          */
-                         /* resume/suspend loop may be needed for call  */
-                         /* to GetThreadContext to succeed              */
 
 # ifdef GC_PTHREADS
     unsigned char flags;        /* Protected by GC lock.                */
@@ -247,6 +244,12 @@ struct GC_Thread_Rep {
     void *status;  /* hold exit value until join in case it's a pointer */
 # else
 #   define KNOWN_FINISHED(t) 0
+# endif
+
+# ifdef RETRY_GET_THREAD_CONTEXT
+    CONTEXT saved_context; /* Populated as part of GC_suspend() as      */
+                           /* resume/suspend loop may be needed for the */
+                           /* call to GetThreadContext() to succeed.    */
 # endif
 
 # ifdef THREAD_LOCAL_ALLOC
@@ -1180,8 +1183,9 @@ void GC_push_thread_structures(void)
 /* Suspend the given thread, if it's still active.      */
 STATIC void GC_suspend(GC_thread t)
 {
-# ifndef MSWINCE
-  int iterations;
+# ifdef RETRY_GET_THREAD_CONTEXT
+    int retry_cnt = 0;
+#   define MAX_SUSPEND_THREAD_RETRIES (1000 * 1000)
 # endif
   UNPROTECT_THREAD(t);
   GC_acquire_dirty_lock ();
@@ -1189,55 +1193,30 @@ STATIC void GC_suspend(GC_thread t)
     /* SuspendThread() will fail if thread is running kernel code.      */
     while (SuspendThread(THREAD_HANDLE(t)) == (DWORD)-1)
       Sleep(10); /* in millis */
-# else
-    iterations = 0;
-    while (TRUE)
-    {
-      /* Apparently the Windows 95 GetOpenFileName call creates           */
-      /* a thread that does not properly get cleaned up, and              */
-      /* SuspendThread on its descriptor may provoke a crash.             */
-      /* This reduces the probability of that event, though it still      */
-      /* appears there's a race here.                                     */
-      DWORD exitCode;
+# elif defined(RETRY_GET_THREAD_CONTEXT)
+    for (;;) {
+      if (SuspendThread(t->handle) != (DWORD)-1) {
+        t->saved_context.ContextFlags = GET_THREAD_CONTEXT_FLAGS;
+        if (GetThreadContext(t->handle, &t->saved_context)) {
+          /* TODO: WoW64 extra workaround: if CONTEXT_EXCEPTION_ACTIVE  */
+          /* then Sleep(1) and retry.                                   */
+          break; /* success; the context is saved */
+        }
 
-      if (GetExitCodeThread (t->handle, &exitCode) &&
-          exitCode != STILL_ACTIVE)
-      {
-#       ifdef GC_PTHREADS
-          t->stack_base = 0; /* prevent stack from being pushed */
-#       else
-          /* this breaks pthread_join on Cygwin, which is guaranteed to  */
-          /* only see user pthreads                                      */
-          GC_ASSERT (GC_win32_dll_threads);
-          GC_delete_gc_thread_no_free (t);
-#       endif
-        GC_release_dirty_lock ();
-        return;
+        /* Resume the thread, try to suspend it in a better location.   */
+        if (ResumeThread(t->handle) == (DWORD)-1)
+          ABORT("ResumeThread failed");
       }
-
-      {
-        DWORD res;
-        do {
-          res = SuspendThread (t->handle);
-        } while (res == (DWORD)-1);
-      }
-
-      t->saved_context.ContextFlags = CONTEXT_INTEGER | CONTEXT_CONTROL;
-      if (GetThreadContext (t->handle, &t->saved_context)) {
-        t->suspended = (unsigned char)TRUE;
-        break; /* success case break out of loop */
-      }
-
-      /* resume thread and try to suspend in better location */
-      if (ResumeThread (t->handle) == (DWORD)-1)
-        ABORT ("ResumeThread failed");
-
-      /* after a million tries something must be wrong */
-      if (iterations++ == 1000 * 1000)
-        ABORT ("SuspendThread loop failed");
+      if (retry_cnt > 1)
+        Sleep(0); /* yield */
+      if (++retry_cnt >= MAX_SUSPEND_THREAD_RETRIES)
+        ABORT("SuspendThread loop failed"); /* something must be wrong */
     }
-# endif /* !MSWINCE */
-  t->suspended = (unsigned char)TRUE;
+# else
+    if (SuspendThread(t -> handle) == (DWORD)-1)
+      ABORT("SuspendThread failed");
+# endif
+  t -> suspended = (unsigned char)TRUE;
   GC_release_dirty_lock();
   if (GC_on_thread_event)
     GC_on_thread_event(GC_EVENT_THREAD_SUSPENDED, THREAD_HANDLE(t));
@@ -1436,12 +1415,19 @@ STATIC word GC_push_stack_for(GC_thread thread, DWORD me)
     sp = GC_approx_sp();
   } else if ((sp = thread -> thread_blocked_sp) == NULL) {
               /* Use saved sp value for blocked threads. */
-    /* For unblocked threads call GetThreadContext().   */
-    CONTEXT context;
+#   ifdef RETRY_GET_THREAD_CONTEXT
+      /* We cache context when suspending the thread since it may       */
+      /* require looping.                                               */
+      CONTEXT *pcontext = &thread->saved_context;
+#     define context (*pcontext)
+#   else
+      /* For unblocked threads call GetThreadContext(). */
+      CONTEXT context;
 
-    context.ContextFlags = GET_THREAD_CONTEXT_FLAGS;
-    if (!GetThreadContext(THREAD_HANDLE(thread), &context))
-      ABORT("GetThreadContext failed");
+      context.ContextFlags = GET_THREAD_CONTEXT_FLAGS;
+      if (!GetThreadContext(THREAD_HANDLE(thread), &context))
+        ABORT("GetThreadContext failed");
+#   endif
 
     /* Push all registers that might point into the heap.  Frame        */
     /* pointer registers are included in case client code was           */
@@ -1544,6 +1530,9 @@ STATIC word GC_push_stack_for(GC_thread thread, DWORD me)
         }
 #     endif
 #   endif /* WOW64_THREAD_CONTEXT_WORKAROUND */
+#   ifdef RETRY_GET_THREAD_CONTEXT
+#     undef context
+#   endif
   } /* ! current thread */
 
   /* Set stack_min to the lowest address in the thread stack,   */
