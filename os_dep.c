@@ -1170,10 +1170,12 @@ GC_INNER size_t GC_page_size = 0;
 #endif /* LINUX_STACKBOTTOM */
 
 #ifdef QNX_STACKBOTTOM
+
   STATIC ptr_t GC_qnx_main_stack_base(void)
   {
-    return (ptr_t)__builtin_frame_address(1);
+    return (ptr_t)__builtin_frame_address(0);
   }
+
 #endif /* QNX_STACKBOTTOM */
 
 #ifdef FREEBSD_STACKBOTTOM
