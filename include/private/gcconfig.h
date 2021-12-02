@@ -106,10 +106,20 @@ EXTERN_C_BEGIN
 
 /* And one for QNX: */
 # if defined(__QNX__)
-#    define I386
+#    define QNX_STACKBOTTOM 1
+#    if defined(__aarch64__)
+#        define AARCH64
+#    elif defined(__arm__) || defined(__ARM__)
+#        define ARM32
+#    elif defined(__amd64) || defined(__X86_64__)
+#        define X86_64
+#    elif defined(__X86__)
+#        define I386
+#    else
+#        error Unknown QNX target architecture detected.
+#    endif
 #    define OS_TYPE "QNX"
 #    define SA_RESTART 0
-#    define HEURISTIC1
      extern char etext[];
      extern int _end[];
 #    define DATASTART ((ptr_t)(etext))
@@ -155,7 +165,7 @@ EXTERN_C_BEGIN
 # if defined(__aarch64__)
 #    define AARCH64
 #    if !defined(LINUX) && !defined(DARWIN) && !defined(FREEBSD) \
-        && !defined(NN_BUILD_TARGET_PLATFORM_NX)
+        && !defined(NN_BUILD_TARGET_PLATFORM_NX) && !defined(__QNX__)
 #      define NOSYS
 #      define mach_type_known
 #    endif
@@ -169,7 +179,7 @@ EXTERN_C_BEGIN
           && !defined(__CEGCC__) && !defined(NN_PLATFORM_CTR) \
           && !defined(NN_BUILD_TARGET_PLATFORM_NX) \
           && !defined(GC_NO_NOSYS) && !defined(SN_TARGET_PSP2) \
-          && !defined(SYMBIAN)
+          && !defined(SYMBIAN) && !defined(__QNX__)
 #      define NOSYS
 #      define mach_type_known
 #    endif
@@ -3022,7 +3032,7 @@ EXTERN_C_BEGIN
 #if defined(SVR4) || defined(LINUX) || defined(IRIX5) || defined(HPUX) \
     || defined(OPENBSD) || defined(NETBSD) || defined(FREEBSD) \
     || defined(DGUX) || defined(BSD) || defined(HAIKU) || defined(HURD) \
-    || defined(AIX) || defined(DARWIN) || defined(OSF1)
+    || defined(AIX) || defined(DARWIN) || defined(OSF1) || defined(__QNX__)
 # define UNIX_LIKE      /* Basic Unix-like system calls work.   */
 #endif
 
@@ -3146,7 +3156,7 @@ EXTERN_C_BEGIN
 
 #if ((defined(UNIX_LIKE) && (defined(DARWIN) || defined(HAIKU) \
                              || defined(HURD) || defined(OPENBSD) \
-                             || defined(ARM32) \
+                             || defined(ARM32) || defined(__QNX__) \
                              || defined(AVR32) || defined(MIPS) \
                              || defined(NIOS2) || defined(OR1K))) \
      || (defined(LINUX) && !defined(__gnu_linux__)) \
