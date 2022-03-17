@@ -1573,6 +1573,7 @@ STATIC word GC_push_stack_for(GC_thread thread, DWORD me)
 #         endif
           GC_ASSERT(!((word)thread->stack_base
                       COOLER_THAN (word)tib->StackBase));
+#         ifdef UNITY_MISSING_COMMIT_5668de71
           if (thread->stack_base != thread->initial_stack_base
               /* We are in a coroutine. */
               && ((word)thread->stack_base <= (word)tib->StackLimit
@@ -1584,7 +1585,9 @@ STATIC word GC_push_stack_for(GC_thread thread, DWORD me)
             /* sp really points to the stack top but, for now, we do    */
             /* our best as the TIB stack limit/base cannot be used      */
             /* while we are inside a coroutine.                         */
-          } else {
+          } else
+#         endif
+          {
             /* GetThreadContext() might return stale register values,   */
             /* so we scan the entire stack region (down to the stack    */
             /* limit).  There is no 100% guarantee that all the         */
