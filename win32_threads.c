@@ -223,6 +223,10 @@ struct GC_Thread_Rep {
 #   define THREAD_HANDLE(t) (t)->handle
 # endif
 
+# ifdef WOW64_THREAD_CONTEXT_WORKAROUND
+    PNT_TIB tib;
+# endif
+
   ptr_t stack_base;     /* The cold end of the stack.   */
                         /* 0 ==> entry not valid.       */
                         /* !in_use ==> stack_base == 0  */
@@ -495,6 +499,9 @@ STATIC GC_thread GC_register_my_thread_inner(const struct GC_stack_base *sb,
         ABORT_ARG1("DuplicateHandle failed",
                    ": errcode= 0x%X", (unsigned)GetLastError());
     }
+# endif
+# ifdef WOW64_THREAD_CONTEXT_WORKAROUND
+    me -> tib = (PNT_TIB)NtCurrentTeb();
 # endif
   me -> last_stack_min = ADDR_LIMIT;
   GC_record_stack_base(me, sb);
@@ -1559,14 +1566,10 @@ STATIC word GC_push_stack_for(GC_thread thread, DWORD me)
         if ((ContextFlags & CONTEXT_EXCEPTION_REPORTING) != 0
             && (ContextFlags & (CONTEXT_EXCEPTION_ACTIVE
                                 /* | CONTEXT_SERVICE_ACTIVE */)) != 0) {
-          LDT_ENTRY selector;
-          PNT_TIB tib;
-
-          if (!GetThreadSelectorEntry(THREAD_HANDLE(thread), SegFs, &selector))
-            ABORT("GetThreadSelectorEntry failed");
-          tib = (PNT_TIB)(selector.BaseLow
-                          | (selector.HighWord.Bits.BaseMid << 16)
-                          | (selector.HighWord.Bits.BaseHi << 24));
+          PNT_TIB tib = thread->tib;
+          if (!tib) {
+            ABORT("TIB is invalid!");
+          }
 #         ifdef DEBUG_THREADS
             GC_log_printf("TIB stack limit/base: %p .. %p\n",
                           (void *)tib->StackLimit, (void *)tib->StackBase);
@@ -2574,6 +2577,37 @@ GC_INNER void GC_get_next_stack(char *start, char *limit,
 
 #endif /* GC_WINMAIN_REDIRECT */
 
+# ifdef WOW64_THREAD_CONTEXT_WORKAROUND
+
+#   ifdef MSWINRT_FLAVOR
+/* available on WinRT but we have to forward declare to use */
+__declspec(dllimport) HMODULE WINAPI GetModuleHandleW(LPCWSTR lpModuleName);
+#   endif
+
+STATIC BOOL is_wow64_process(void)
+{
+  /* try to use IsWow64Process2 as it handles different Wow cases */
+  HMODULE hWow64 = GetModuleHandleW(L"api-ms-win-core-wow64-l1-1-1.dll");
+  if (hWow64) {
+    FARPROC pfn = GetProcAddress(hWow64, "IsWow64Process2");
+    if (pfn) {
+      USHORT process_machine, native_machine;
+      if ((*(BOOL (WINAPI*)(HANDLE, USHORT*, USHORT*))pfn)(GetCurrentProcess(), &process_machine, &native_machine)) {
+        return (process_machine != native_machine);
+      }
+    }
+  }
+
+  {
+    BOOL is_wow64 = FALSE;
+    if (IsWow64Process(GetCurrentProcess(), &is_wow64))
+      return is_wow64;
+  }
+
+  return FALSE;
+}
+# endif
+
 GC_INNER void GC_thr_init(void)
 {
   struct GC_stack_base sb;
@@ -2605,16 +2639,7 @@ GC_INNER void GC_thr_init(void)
 
 # ifdef WOW64_THREAD_CONTEXT_WORKAROUND
     /* Set isWow64 flag. */
-    {
-      HMODULE hK32 = GetModuleHandle(TEXT("kernel32.dll"));
-      if (hK32) {
-        FARPROC pfn = GetProcAddress(hK32, "IsWow64Process");
-        if (pfn
-            && !(*(BOOL (WINAPI*)(HANDLE, BOOL*))pfn)(GetCurrentProcess(),
-                                                      &isWow64))
-          isWow64 = FALSE; /* IsWow64Process failed */
-      }
-    }
+    isWow64 = is_wow64_process();
 # endif
 
   /* Add the initial thread, so we can stop it. */
