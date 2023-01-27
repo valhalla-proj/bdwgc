@@ -412,8 +412,15 @@ static void alloc_mark_stack(size_t);
                     GC_mark_stack_empty_called = FALSE;
                     return(TRUE);
                   } else {
-                    if (mark_stack_empty_proc != 0)
-                      mark_stack_empty_proc();
+                    if (mark_stack_empty_proc != 0) {
+                      if (!mark_stack_empty_proc()) {
+                        /* processing could not be completed */
+                        /* increase mark stack and to try again */
+                        GC_mark_state = MS_NONE;
+                        alloc_mark_stack(2 * GC_mark_stack_size);
+                        return(TRUE);
+                      }
+                    }
 
                     /* break below here loops us around the mark phase once again */
                     /* to process any items push by the callback */
