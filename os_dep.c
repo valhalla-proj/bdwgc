@@ -1535,15 +1535,7 @@ GC_INNER size_t GC_page_size = 0;
 /* added later then they need to be registered at that point (as we do  */
 /* with SunOS dynamic loading), or GC_mark_roots needs to check for     */
 /* them (as we do with PCR).  Called with allocator lock held.          */
-# if !defined(DYNAMIC_LOADING) && defined(GC_DONT_REGISTER_MAIN_STATIC_DATA)
-
-void GC_register_data_segments(void)
-{
-  /* This will never be called, but stub out empty function to avoid
-   * potential linker errors such as when compiling to bitcode. */
-}
-
-# elif defined(OS2)
+# ifdef OS2
 
 void GC_register_data_segments(void)
 {
@@ -2064,6 +2056,9 @@ void GC_register_data_segments(void)
           if ((word)DATASTART < (word)p)
             GC_add_roots_inner(DATASTART, p, FALSE);
         }
+#     elif defined(HOST_ANDROID) && !defined(DYNAMIC_LOADING) && defined(GC_DONT_REGISTER_MAIN_STATIC_DATA)
+        /* avoid even referencing DATASTART & DATAEND as they are       */
+        /* unnecessary and cause linker errors when bitcode is enabled  */
 #     else
         if ((word)DATASTART - 1U >= (word)DATAEND) {
                                 /* Subtract one to check also for NULL  */
