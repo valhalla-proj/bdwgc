@@ -864,18 +864,6 @@ GC_INNER size_t GC_page_size = 0;
 # define HAVE_GET_STACK_BASE
 #endif /* OS2 */
 
-#ifdef QNX
-  EXTERN_C_BEGIN
-  extern int qnx_get_stack_base(struct GC_stack_base *sb);
-  EXTERN_C_END
-
-  GC_API int GC_CALL GC_get_stack_base(struct GC_stack_base *sb)
-  {
-    return qnx_get_stack_base(sb);
-  }
-# define HAVE_GET_STACK_BASE
-#endif /* QNX */
-
 # ifdef AMIGA
 #   define GC_AMIGA_SB
 #   include "extra/AmigaOS.c"
